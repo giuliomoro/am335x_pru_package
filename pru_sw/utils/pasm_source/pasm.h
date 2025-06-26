@@ -88,6 +88,7 @@ typedef struct _SOURCEFILE {
     char            SourceName[SOURCE_NAME];
     char            SourceBaseDir[SOURCE_BASE_DIR];
 } SOURCEFILE;
+void PrintSourceFile(SOURCEFILE* s);
 
 /* Source Line Record */
 #define MAX_TOKENS      12

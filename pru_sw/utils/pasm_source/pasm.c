@@ -1409,3 +1409,17 @@ static int ListFile( FILE *pfOut, SOURCEFILE *ps )
     }
     return(1);
 }
+
+void PrintSourceFile(SOURCEFILE* s)
+{
+    printf("pParent: %p\n", s->pParent);
+    printf("FilePtr: %p\n", s->FilePtr);
+    printf("InUse: %d\n", s->InUse);
+    printf("FileIndex: %d\n", s->FileIndex);
+    printf("CurrentLine: %d\n", s->CurrentLine);
+    printf("CurrentColumn: %d\n", s->CurrentColumn);
+    printf("ccDepthIn: %d\n", s->ccDepthIn);
+    printf("LastChar: %c\n", s->LastChar);
+    printf("SourceName: %s\n", s->SourceName);
+    printf("SourceBaseDir: %s\n", s->SourceBaseDir);
+}
