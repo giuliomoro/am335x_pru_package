@@ -74,6 +74,7 @@
 #endif
 #include <ctype.h>
 #include "pasm.h"
+#include "pasmmacro.h"
 #include "pasmdbg.h"
 #include "path_utils.h"
 
@@ -148,7 +149,7 @@ int  nameCArraySet = 0;
 /* Local Support Funtions */
 static int ValidateOffset( SOURCEFILE *ps );
 static int PrintLine( FILE *pfOut, SOURCEFILE *ps );
-static int GetInfoFromAddr( uint address, uint *pIndex, uint *pLineNo, uint *pCodeWord );
+static int GetInfoFromAddr( uint address, uint *pIndex, uint *pLineNo, MACRODATA *pMacroData, uint *pCodeWord );
 static int ListFile( FILE *pfOut, SOURCEFILE *ps );
 
 /*
@@ -195,6 +196,8 @@ USAGE:
         fprintf(stderr,"    c  - Create 'C array' binary output (*_bin.h)\n");
         fprintf(stderr,"    m  - Create 'image' binary output (*.img)\n");
         fprintf(stderr,"    L  - Create annotated source file style listing (*.txt)\n");
+        fprintf(stderr,"    n  - Do not show macro content in annotated file listing\n");
+        fprintf(stderr,"    N  - Use original macro content for annotated file listing (slower)\n");
         fprintf(stderr,"    l  - Create raw listing file (*.lst)\n");
         fprintf(stderr,"    d  - Create pView debug file (*.dbg)\n");
         fprintf(stderr,"    f  - Create 'FreeBasic array' binary output (*.bi)\n");
@@ -333,6 +336,10 @@ USAGE:
                     Options |= OPTION_LISTING;
                 else if( *flags == 'L' )
                     Options |= OPTION_SOURCELISTING;
+                else if( *flags == 'N' )
+                    Options |= OPTION_SOURCELISTING_ORIGINAL_MACROS;
+                else if( *flags == 'n' )
+                    Options |= OPTION_SOURCELISTING_NO_MACROS;
                 else if( *flags == 'd' )
                     Options |= OPTION_DBGFILE;
                 else if( *flags == 'f' )
@@ -438,8 +445,12 @@ USAGE:
         CloseSourceFile( mainsource );
 
         /* Cleanup the PP and DOT modules */
-        ppCleanup(Pass);
-        DotCleanup(Pass);
+        if (Pass==1)
+        {
+            // postpone cleanup until after we've used macros in the listing
+            ppCleanup(Pass);
+            DotCleanup(Pass);
+        }
 
         if( Pass==1 )
         {
@@ -738,6 +749,9 @@ USAGE:
         }
     }
 
+    /* postponed cleanup from second pass while we were using the macros in OPTION_SOURCELISTING */
+    ppCleanup(Pass);
+    DotCleanup(Pass);
     /* Assember label cleanup */
     while( pLabelList )
         LabelDestroy( pLabelList );
@@ -1045,6 +1059,11 @@ void GenOp( SOURCEFILE *ps, int TermCnt, char **pTerms, uint opcode )
     ProgramImage[CodeOffset].FileIndex  = ps->FileIndex;
     ProgramImage[CodeOffset].Line       = ps->CurrentLine;
     ProgramImage[CodeOffset].AddrOffset = CodeOffset;
+    if(ps->MacroData) {
+        ProgramImage[CodeOffset].MacroData = *ps->MacroData;
+    }
+     else
+        ProgramImage[CodeOffset].MacroData.IsMacro = 0;
     ProgramImage[CodeOffset++].CodeWord = opcode;
 }
 
@@ -1289,6 +1308,46 @@ static int ValidateOffset( SOURCEFILE *ps )
     return(1);
 }
 
+static int PrintLineFromSource( FILE *pfOut, unsigned int i, unsigned int line )
+{
+    if (!pfOut)
+        return 0;
+    if (i >= sfIndex)
+        return 0;
+    char FullPath[SOURCE_BASE_DIR+SOURCE_NAME];
+    snprintf(FullPath,sizeof(FullPath),"%s/%s",sfArray[i].SourceBaseDir,sfArray[i].SourceName);
+    FILE* file = fopen(FullPath, "r");
+    unsigned int currentLine = 1; // start from line 1
+    unsigned int printed = 0;
+    for(;file && !printed;)
+    {
+        char Chunk[1024];
+        size_t ret = fread(&Chunk, 1, sizeof(Chunk), file);
+        if (!ret)
+            break;
+        for(unsigned int n = 0; n < ret; ++n)
+        {
+            char c = Chunk[n];
+            if(currentLine == line)
+            {
+                fprintf(pfOut, "%c", c);
+            }
+            if('\n' == c)
+            {
+                if( currentLine == line )
+                {
+                    printed = 1;
+                    break; // done
+                }
+                currentLine++; // keep looking for line
+            }
+        }
+    }
+    if( !printed )
+        fprintf(pfOut, "\n"); // in case anything goes wrong, still create a new line
+    fclose(file);
+    return 0;
+}
 /*
 // PrintLine
 //
@@ -1324,12 +1383,13 @@ AGAIN:
 //
 // Returns 0 on success, -1 on error
 */
-static int GetInfoFromAddr( uint address, uint *pIndex, uint *pLineNo, uint *pCodeWord )
+static int GetInfoFromAddr( uint address, uint *pIndex, uint *pLineNo, MACRODATA *pMacroData, uint *pCodeWord )
 {
     // Return data if within written portion of array and entry has been set
     if (address < CodeOffset && ProgramImage[address].AddrOffset == address) {
        *pIndex = ProgramImage[address].FileIndex;
        *pLineNo = ProgramImage[address].Line;
+       *pMacroData = ProgramImage[address].MacroData;
        *pCodeWord = ProgramImage[address].CodeWord;
        return 0;
     }
@@ -1346,11 +1406,12 @@ static int GetInfoFromAddr( uint address, uint *pIndex, uint *pLineNo, uint *pCo
 static int ListFile( FILE *pfOut, SOURCEFILE *ps )
 {
     uint addr, index, line, code, count, output, cline;
+    MACRODATA md;
 
     count = 0;
     for( addr=0; addr<(uint)CodeOffset; addr++ )
     {
-        if( GetInfoFromAddr( addr, &index, &line, &code ) >= 0 )
+        if( GetInfoFromAddr( addr, &index, &line, &md, &code ) >= 0 )
         {
             if( index == ps->FileIndex )
                 count++;
@@ -1380,21 +1441,38 @@ static int ListFile( FILE *pfOut, SOURCEFILE *ps )
 
             for( addr=0; addr<(uint)CodeOffset; addr++ )
             {
-                if( (GetInfoFromAddr( addr, &index, &line, &code ) < 0) || index!=ps->FileIndex || line<cline )
+                MACRODATA md;
+                if( (GetInfoFromAddr( addr, &index, &line, &md, &code ) < 0) || index!=ps->FileIndex || line<cline )
                     continue;
 
                 if( line == cline )
                 {
+                    int printMacroNow = md.IsMacro && !( Options & OPTION_SOURCELISTING_NO_MACROS );
                     if( !output )
                     {
-                        fprintf(pfOut,"%5d : 0x%04x 0x%08x : ",line,addr,code );
+                        fprintf(pfOut,"%5d : ",line);
+                        if ( printMacroNow ) // leave addr/code blank, will be printed in macro below
+                            fprintf(pfOut,"%18s: ", "");
+                        else
+                            fprintf(pfOut,"0x%04x 0x%08x : ",addr,code );
                         if( !PrintLine(pfOut,ps) )
                             return(1);
                         output = 1;
                     }
-                    else
+                    else if( !printMacroNow )
                     {
-                        fprintf(pfOut,"      : 0x%04x 0x%08x : \n",addr,code );
+                        fprintf(pfOut,"      : 0x%04x 0x%08x :\n",addr,code );
+                    }
+                    if( printMacroNow )
+                    {
+                        unsigned int lineInFile = md.Macro->LineNumbers[md.LineInMacro];
+                        fprintf(pfOut,"%5d : %20s: %d : 0x%04x 0x%08x : ",line,md.Macro->Name,lineInFile,addr,code);
+                        if ( md.IsMacro && ( Options & OPTION_SOURCELISTING_ORIGINAL_MACROS ) )
+                        {
+                            PrintLineFromSource( pfOut, md.Macro->SourceIndex, lineInFile );
+                        } else {
+                            fprintf(pfOut, "%s\n", md.Macro->Code[md.LineInMacro]);
+                        }
                     }
                 }
             }

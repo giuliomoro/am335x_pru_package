@@ -58,6 +58,7 @@
 //     21-Jun-13: 0.84 - Open source version
 //     21-May-16: 0.87 - Added -f option for 'FreeBasic array' binary output
 ============================================================================*/
+#pragma once
 typedef unsigned int uint;
 
 #include "pru_ins.h"
@@ -73,6 +74,13 @@ typedef struct _LABEL {
     char            Name[LABEL_NAME_LEN];
 } LABEL;
 
+struct _MACRO;
+typedef struct _MACRODATA {
+    unsigned int    IsMacro:1;
+    unsigned int    LineInMacro:31;
+    struct _MACRO*  Macro;
+} MACRODATA;
+
 /* Source File Record */
 #define SOURCE_NAME     64
 #define SOURCE_BASE_DIR 256
@@ -87,6 +95,7 @@ typedef struct _SOURCEFILE {
     char            LastChar;       /* Last character read from file */
     char            SourceName[SOURCE_NAME];
     char            SourceBaseDir[SOURCE_BASE_DIR];
+    MACRODATA*      MacroData;
 } SOURCEFILE;
 void PrintSourceFile(SOURCEFILE* s);
 
@@ -112,6 +121,7 @@ typedef struct _CODEGEN {
     unsigned int    Line;           /* The line number */
     unsigned int    AddrOffset;     /* Code address offset */
     unsigned int    CodeWord;       /* Code */
+    MACRODATA       MacroData;      /* Info about where the macro came from */
 } CODEGEN;
 
 /* User Options */
@@ -127,6 +137,8 @@ extern unsigned int Options;
 #define OPTION_RETREGSET            (1<<8)
 #define OPTION_SOURCELISTING        (1<<9)
 #define OPTION_FBARRAY              (1<<10)
+#define OPTION_SOURCELISTING_NO_MACROS (1<<11)
+#define OPTION_SOURCELISTING_ORIGINAL_MACROS (1<<12)
 extern unsigned int Core;
 #define CORE_NONE                   0
 #define CORE_V0                     1

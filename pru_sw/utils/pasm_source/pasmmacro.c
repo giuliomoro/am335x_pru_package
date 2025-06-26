@@ -65,38 +65,9 @@
 #include <stdlib.h>
 #endif
 #include <ctype.h>
-#include "pasm.h"
+#include "pasmmacro.h"
 
-/* Local Macro Definitions */
-
-#define MACRO_NAME_LEN      TOKEN_MAX_LEN
-#define MACRO_MAX_ARGS      8
-#define MACRO_MAX_LINES     128
-#define MACRO_LINE_LENGTH   256
-#define MACRO_MAX_LABELS    32
 #define MAX_SOURCE_LINE     256
-
-/* Macro Struct Record */
-typedef struct _MACRO {
-    struct _MACRO   *pPrev;         /* Previous in MACRO list */
-    struct _MACRO   *pNext;         /* Next in MACRO list */
-    char            Name[MACRO_NAME_LEN];
-    int             InUse;          /* Macro is in use */
-    int             Id;             /* Macro ID */
-    int             Arguments;      /* Number of arguments */
-    int             Required;       /* Number of required arguments */
-    int             Labels;         /* Number of labels */
-    int             Expands;        /* Number of label expansions */
-    int             CodeLines;      /* Number of code lines */
-    char            ArgName[MACRO_MAX_ARGS][TOKEN_MAX_LEN];
-    char            ArgDefault[MACRO_MAX_ARGS][TOKEN_MAX_LEN];
-    char            LableName[MACRO_MAX_LABELS][TOKEN_MAX_LEN];
-    char            Code[MACRO_MAX_LINES][MACRO_LINE_LENGTH];
-    int             LineNumbers[MACRO_MAX_LINES];
-    char            SourceName[SOURCE_NAME];
-} MACRO;
-
-
 /* Local Support Funtions */
 static int _strncat( char *dst, int len, char *src );
 static MACRO *MacroFind( char *Name );
@@ -139,6 +110,7 @@ int MacroEnter( SOURCEFILE *ps, char *Name )
 
     /* Preserve the name of macro source file for error reporting */
     strncpy(pm->SourceName, ps->SourceName, SOURCE_NAME);
+    pm->SourceIndex = ps->FileIndex;
 
     /* Scan source lines until we see .endm */
     for(;;)
@@ -316,6 +288,11 @@ SUBTEXTDONE:
         i=strlen(src);
         if(i)
         {
+            MACRODATA md;
+            md.IsMacro = 1;
+            md.Macro = pm;
+            md.LineInMacro = cidx;
+            ps->MacroData = &md;
             if( !ProcessSourceLine(ps, i, src, MAX_SOURCE_LINE) )
             {
                 if(strcmp(ps->SourceName, pm->SourceName))
@@ -332,6 +309,7 @@ SUBTEXTDONE:
                 pm->InUse=0;
                 return(0);
             }
+            ps->MacroData = NULL; // reset just in case
         }
     }
     pm->InUse = 0;
